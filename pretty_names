@@ -1,0 +1,457 @@
+# Load Libraries ##################
+library(readxl)
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(formattable)
+library(kableExtra)
+library(DT)
+
+
+pretty_names <- function(df, pnames = FALSE, ...) {
+  
+  if (!pnames) {return(df)}
+  
+  df <-
+    set_names(df, ~str_replace_all(.x, "_", " ")
+    ) %>%
+    set_names(~str_to_title(.x))
+  
+  return(df)
+  
+} # END pretty_names
+
+# Will return the given df with formatted columns
+# df: the data frame to format
+# f_col: how to enter formating, as a string "ncrpncrp..." with each item a column
+# will default the first 20 columns to comma rounded to whole numbers
+# n = no format
+# c = comma rounded to whole numbers
+# r = rounded to 4 dights
+# R = rounded to 2 dights
+# p = percent rounded to 4 dights
+# 2 = percent rounded to 2 dights
+# D = dollar rounded to whole numbers
+# d = dollar rounded to 2 dights
+format_columns <- function(df, f_col = "cccccccccccccccccccc", ...) {
+  
+  f_comma0 <- NULL
+  
+  f_round4 <- NULL
+  
+  f_round2 <- NULL
+  
+  f_percent4 <- NULL
+  
+  f_percent2 <- NULL
+  
+  f_dollar2 <- NULL
+  
+  f_dollar0 <- NULL
+  
+  # trucate to number of columns
+  f_col <- str_trunc(f_col, ncol(df), "right", "")
+  
+  # need column names to format
+  for (x in 1:str_length(f_col)) {
+    
+    if (str_sub(f_col, x, x) == "n") {next()}
+    if(!is.numeric(df[[1, x]])) {next()}
+    
+    # comma
+    if (str_sub(f_col, x, x) == "c") {
+      
+      f_comma0 <- c(f_comma0, names(df[x]))
+    }
+    
+    # round 4
+    if (str_sub(f_col, x, x) == "r") {
+      
+      f_round4 <- c(f_round4, names(df[x]))
+    }
+    
+    # round 2
+    if (str_sub(f_col, x, x) == "R") {
+      
+      f_round2 <- c(f_round2, names(df[x]))
+    }
+    
+    # percent4
+    if (str_sub(f_col, x, x) == "p") {
+      
+      f_percent4 <- c(f_percent4, names(df[x]))
+    }
+    
+    # percent2
+    if (str_sub(f_col, x, x) == "2") {
+      
+      f_percent2 <- c(f_percent2, names(df[x]))
+    }
+    
+    # dollar
+    if (str_sub(f_col, x, x) == "d") {
+      
+      f_dollar2 <- c(f_dollar2, names(df[x]))
+    }
+    
+    # Dollar
+    if (str_sub(f_col, x, x) == "D") {
+      
+      f_dollar0 <- c(f_dollar0, names(df[x]))
+    }
+    
+  } # end for loop
+  
+  df1 <-
+    df %>%
+    mutate(across(all_of(f_comma0), ~comma(.x, 0))) %>%
+    mutate(across(all_of(f_round4), ~round(.x, 4))) %>%
+    mutate(across(all_of(f_round2), ~round(.x, 2))) %>%
+    mutate(across(all_of(f_percent4), ~percent(.x, 4))) %>%
+    mutate(across(all_of(f_percent2), ~percent(.x, 2))) %>%
+    mutate(across(all_of(f_dollar2), ~scales::dollar(.x, .01))) %>%
+    mutate(across(all_of(f_dollar0), ~scales::dollar(.x)))
+  
+  return(df1)
+  
+} # END format_columns
+
+# Will return a single total/summary line for a given df
+# all numeric columns will be totaled
+# if first column is not numeric will be returned as "Total:"
+# NULL will be returned if there are no numeric columns
+# If total_na is TRUE, which is the default, will give totals even if there are numeric NAs.
+df_total_line <- function(df, total_na = TRUE, ...) {
+  
+  df <- df %>%
+    ungroup()
+  
+  if (!ncol(df %>% select(where(is.numeric))) > 0) {
+    return(NULL)
+  }
+  
+  if (total_na) {
+    df <-
+      df %>%
+      mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))
+  }
+
+  if (is.numeric(df[[1,1]])) {
+    df %>%
+      summarise(across(where(is.numeric), sum))
+  } else {
+    df %>%
+      summarise(across(where(is.numeric), sum)) %>%
+      add_column(!!(names(df[,1])) := "Totals:", .before = 1)
+  }
+  
+} # END df_total_line
+
+
+# This assumes that the last column is a rate and the total line needs to calculate the total rate.
+# The rate calculation is (last column - 1 / last column -2)
+# all numeric columns will be totaled
+# if first column is not numeric will be returned as "Total:"
+# NULL will be returned if there are no numeric columns
+# If total_na is TRUE, which is the default, will give totals even if there are numeric NAs.
+df_total_line_rate <- function(df, total_na = TRUE, ...) {
+  
+  df <- df %>%
+    ungroup()
+
+  if (!ncol(df %>% select(where(is.numeric))) > 0) {
+    return(NULL)
+  }
+
+  if (total_na) {
+    df <-
+      df %>%
+      mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))
+  }
+  
+  r_name <- colnames(df[ncol(df)])
+    
+  
+  if (is.numeric(df[[1,1]])) {
+    df %>%
+      summarise(across(where(is.numeric), sum)) %>%
+      select(-last_col()) %>%
+      mutate(!!quo_name(r_name) := (sum(df[ncol(df)-1])/sum(df[ncol(df)-2])))
+    
+  } else {
+    df %>%
+      summarise(across(where(is.numeric), sum)) %>%
+      select(-last_col()) %>%
+      mutate(!!quo_name(r_name) := (sum(df[ncol(df)-1])/sum(df[ncol(df)-2]))) %>%
+      add_column(!!(names(df[,1])) := "Totals:", .before = 1)
+    
+  }
+  
+} # END df_total_line_rate
+
+# to add a total line to a df before printing ####
+# will take a df and return the df with a total line or total line with last column as rate
+# add totals for all numeric columns
+# if rep_na is TRUE all numeric NAs will be replaced in the df by zero before totaling and 
+#   the returning df will not have any numeric NAs
+df_add_total_line <-function(df, rep_na = TRUE, tlineR = FALSE, ...) {
+  
+  if (!ncol(df %>% select(where(is.numeric))) > 0 || nrow(df) == 0) {
+    return(df)
+  }
+  
+  if (rep_na) {
+    df <-
+      df %>%
+      mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))
+  }
+  
+
+  if (tlineR) {
+    df <-
+      df %>%
+      bind_rows(df_total_line_rate(df, ...))
+      
+  } else {
+    df <-
+      df %>%
+      bind_rows(df_total_line(df, ...))
+  }
+
+  return(df)
+  
+} # END df_add_total_line
+
+# to add a total line to a df before printing ####
+# This functions is being replaced by df_add_total_line
+# will take a df and return the df with a total line
+# add totals for all numeric columns
+add_total_line <-function(df, ...) {
+  
+ if (!ncol(df %>% select(where(is.numeric))) > 0) {
+    return(df)
+  }
+  
+ df <-
+    df %>%
+    bind_rows(df_total_line(df, ...))
+  
+  return(df)
+  
+} # END add_total_line
+
+# will display/print a df, use in a Rmd doc
+
+# df: data frame to display
+# alignment: the alignment for the columns, defaults to all "l" left; "lcr" format c('l','c','c') where each is a column.
+# caption: Caption for display
+# total_line: boolean (TRUE/FALSE) should a total line be included; 
+#   if total_line is true then the following are available:
+#     rep_na: (TRUE/FALSE) replace all numeric NAs in df with zeros, default is TRUE
+#     total_na: (TRUE/FALSE) will return total even if there are numeric NAs, default is TRUE
+#     tlineR: (TRUE/FALSE) will calculate a rate for the last column using the prior two columns, default is FALSE
+# df_sort: columns to sort on c("col_name1", "col_name2", ...)
+# foot_note: footnote will need to be the the following format c("Note 1", "Note 2" ...); Do not use with scroll box.
+# f_col: used to format the numeric columns, will Default to all comma whole numbers if nothing passed. 
+#   See format_columns function for details.
+# pnames: TRUE to remove "_" from all column names along with capilization the first letter of each word; Defaults to FALSE.
+# if the last row has "Totals:" in the 1st column will bold row
+# if over 15 lines will place in a scroll box
+display_df_standard <- function(df, column_alignment = c("l"), caption = NULL, total_line = FALSE, df_sort = NULL, foot_note = NULL, ...) {
+  
+ if (nrow(df) <=0) {
+    
+    return("No data to output")
+    
+  }
+  
+  if (!is.null(df_sort)) {
+    df <- arrange(df, across(any_of(df_sort)))
+  }
+  
+  if (total_line) {
+    df <- 
+      df_add_total_line(df, ...)
+  } 
+  
+  df <-
+    format_columns(df, ...)
+  
+  df <-
+    pretty_names(df, ...)
+  
+  chart <-
+    df %>%
+    kable(format =  "html", 
+          escape = F,
+          align = column_alignment,
+          caption = caption,
+          # digits = c(0),
+          format.args = list(decimal.mark = ".", big.mark = ",")) %>%
+    # col.names = col_names) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                  full_width = F) %>%
+    row_spec(0, align = "c", background = "#83FAF8")
+  
+  if (!is.na(df[[nrow(df), 1]]) && df[[nrow(df), 1]] == "Totals:") {
+    
+    chart <- row_spec(chart, nrow(df), bold = TRUE, background = "#E6EEEE")
+  }
+  
+  if (nrow(df) > 15) {
+    chart <- scroll_box(chart, height = "700px")
+  }
+  
+  if (!is.null(foot_note)) {
+    chart <- footnote(chart, general = foot_note)
+  }
+  
+  
+  return(chart)
+  
+} # END display_df_standard
+
+# will return a 0 if na
+make_zero <- function(x) {
+  if (is.na(x)) {
+    return(0)
+  } else {
+    return(x)
+  }
+} # END make_zero
+
+# will return a boolean (TRUE/FALSE)
+# used to check for number columns
+are_columns_num <- function(df) {
+  numcol <-
+    df %>%
+    select(where(is.numeric))
+  
+  if (ncol(numcol) > 0) {
+    return(TRUE)
+  } else {
+    return(FALSE)
+  }
+} # END are_columns_num
+
+# will take two df objects that are in the same form 
+# and find and print/display any differences
+# df1: data set1; may work better if this is the newer version...
+# df2: data set2; original version
+# link: column name to link data sets or vector c("colname", "colname" ...); string
+df_diff <- function(df1, df2, link) {
+  
+  if (setequal(df1, df2)) {
+    return(print("Sets are equal"))
+  }
+  
+  df1_names <- colnames(df1)
+  df2_names <- colnames(df2)
+  
+  dif_list <<- list()
+  i <- 1
+  
+  # compare column to column with same name  
+  for (y in seq_along(df1_names)) {
+    
+    if (df1_names[y] == link) {next}
+    
+    # is new column ?
+    if (!df1_names[y] %in% df2_names) { next }
+    
+    sel <- c(link, df1_names[y])
+    
+    nam1 <- paste0(df1_names[y], "_df1")
+    nam2 <- paste0(df1_names[y], "_df2")
+    
+    df_comp <-
+      df1 %>%
+      select(all_of(sel)) %>%
+      rename({{nam1}} := df1_names[y]) %>%
+      left_join(df2 %>%
+                  select(all_of(sel)) %>%
+                  rename({{nam2}} := df1_names[y]),
+                by = c(link))
+    
+    tnames <- colnames(df_comp)
+    
+    if (are_columns_num(df_comp %>%
+                        select(-all_of(link)))) { # numbers
+      
+      df_d <-
+        df_comp %>%
+        select(all_of(tnames)) %>%
+        mutate(diff = map_dbl(.data[[tnames[2]]], make_zero)  -  map_dbl(.data[[tnames[3]]], make_zero)) %>%
+        filter(!diff == 0) %>%
+        select(-diff)
+      
+    } else { # not numbers
+      
+      df_d <-
+        df_comp %>%
+        select(all_of(tnames)) %>%
+        filter(!.data[[tnames[2]]] == .data[[tnames[3]]])
+    } # end else (not numbers)
+    
+    if (nrow(df_d) > 0) {
+      assign(paste0("diffs_", df1_names[y]),  df_d, envir = globalenv())
+      
+      dif_list[[i]] <<- get(paste0("diffs_", df1_names[y]))
+      
+      names(dif_list)[i] <<- paste0("diffs_", df1_names[y])
+      
+      i <- i + 1
+      
+      print(display_df_standard(df_d, cap = paste0("diffs_",df1_names[y])))
+      
+    } # end rows to print
+    
+  } # end for y loop (same column name)
+  
+  
+  
+} # END df_diff
+
+# will print out the new column names
+# df1: the newer version
+# df2: the original version
+# link: column name to link data sets or vector c("colname", "colname" ...); string
+new_columns <- function(df1, df2) {
+  
+  df1_names <- colnames(df1)
+  df2_names <- colnames(df2)
+  
+  # empty df
+  df_newcolumn <-
+    tibble(New_column = c(""), .rows = 0
+    )
+  
+  for (y in seq_along(df1_names)) {
+    if (!df1_names[y] %in% df2_names) {
+      df_newcolumn <- 
+        df_newcolumn %>%
+        add_row(New_column = df1_names[y])
+    }
+  } # end for loop
+  
+  output <- df_newcolumn
+  
+  print(display_df_standard(output))
+  
+} # END new_columns
+
+# will print out the new rows or removed rows
+# df1: the newer version
+# df2: the original version
+new_rows <- function(df1, df2, link) {
+  
+  df_newrows <-
+    df1 %>%
+    anti_join(df2, 
+              by = c(link))
+  
+  print(display_df_standard(df_newrows))
+  
+} # END new_rows
+
+
